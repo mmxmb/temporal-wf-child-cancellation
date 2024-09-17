@@ -49,34 +49,35 @@ func Parent(ctx workflow.Context) error {
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 	var err error
-	numCompletedChildren := 0
+	done := false
 
-	for i := 0; i < numChildren; i++ {
-		workflow.Go(ctx, func(gCtx workflow.Context) {
-			childOpts := workflow.ChildWorkflowOptions{
-				WorkflowID:          "child_" + uuid.New(),
-				TaskQueue:           TaskQueue,
-				WaitForCancellation: true,
-				ParentClosePolicy:   enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-			}
-			childCtx := workflow.WithChildOptions(gCtx, childOpts)
+	workflow.Go(ctx, func(gCtx workflow.Context) {
+		childOpts := workflow.ChildWorkflowOptions{
+			WorkflowID:          "child_" + uuid.New(),
+			TaskQueue:           TaskQueue,
+			WaitForCancellation: true,
+			ParentClosePolicy:   enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+		}
+		childCtx := workflow.WithChildOptions(gCtx, childOpts)
 
-			childFuture := workflow.ExecuteChildWorkflow(childCtx, Child)
+		childFuture := workflow.ExecuteChildWorkflow(childCtx, Child)
 
-			if err := processChildEvents(gCtx, childFuture, childEventHandler); err != nil {
-				err = fmt.Errorf("processing child events: %w", err)
-			}
+		if err := processChildEvents(gCtx, childFuture, childEventHandler); err != nil {
+			err = fmt.Errorf("processing child events: %w", err)
+		}
 
-			if err := childFuture.Get(childCtx, nil); err != nil {
-				err = fmt.Errorf("running child workflow: %w", err)
-			}
-			numCompletedChildren++
-		})
-	}
+		if err := childFuture.Get(childCtx, nil); err != nil {
+			err = fmt.Errorf("running child workflow: %w", err)
+		}
+		done = true
 
-	_ = workflow.Await(ctx, func() bool {
-		return err != nil || numCompletedChildren == numChildren
 	})
+
+	if awaitErr := workflow.Await(ctx, func() bool {
+		return err != nil || done
+	}); awaitErr != nil {
+		return fmt.Errorf("await: %w", err)
+	}
 
 	return nil
 }
